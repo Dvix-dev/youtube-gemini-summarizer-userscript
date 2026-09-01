@@ -1,8 +1,9 @@
+```javascript
 // ==UserScript==
 // @name         YouTube a Gemini Summarizer
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Al hacer Ctrl + Shift + Click en un video de YouTube, abre Gemini y pide un resumen.
+// @version      2.1
+// @description  Añade un botón "Resumir" en YouTube para resumir vídeos usando un chat temporal de Gemini.
 // @author       Dvix-dev
 // @match        *://*.youtube.com/*
 // @match        *://gemini.google.com/*
@@ -15,80 +16,325 @@
 
     const PROMPT_BASE = "Hazme un resumen detallado de este video: ";
     const STORAGE_KEY = "gemini_yt_pending_summary";
+    const BUTTON_ID = "gemini-yt-summary-button";
+
+    // URL del chat temporal de Gemini
+    const GEMINI_TEMPORARY_CHAT_URL = 'https://gemini.google.com/app?temporary=true';
+
 
     // ==========================================
     // 1. LÓGICA PARA YOUTUBE
     // ==========================================
     if (window.location.hostname.includes("youtube.com")) {
+
+        // ------------------------------------------
+        // Ctrl + Shift + Click
+        // ------------------------------------------
         document.addEventListener('click', function(e) {
-            // Verificar que Ctrl y Shift estén presionados
+
             if (e.ctrlKey && e.shiftKey) {
-                // Buscar si se hizo clic en un enlace (ej. la miniatura o el título)
+
                 const link = e.target.closest('a');
 
-                // Verificar que sea un enlace válido de un video de YouTube
                 if (link && link.href && link.href.includes('/watch?v=')) {
-                    e.preventDefault();       // Evita que el video se abra en la pestaña actual
+
+                    e.preventDefault();
                     e.stopPropagation();
 
-                    // Limpiar la URL de parámetros innecesarios (como el tiempo de inicio &t=)
-                    const videoUrl = link.href.split('&')[0];
-                    const promptCompleto = `${PROMPT_BASE}${videoUrl}`;
+                    // Obtener ID del vídeo
+                    const url = new URL(link.href);
+                    const videoId = url.searchParams.get('v');
 
-                    // Guardar el texto en la memoria de Violentmonkey
-                    GM_setValue(STORAGE_KEY, promptCompleto);
+                    if (!videoId) return;
 
-                    // Abrir Gemini en una nueva pestaña en blanco
-                    window.open('https://gemini.google.com/app', '_blank');
+                    const videoUrl =
+                        `https://www.youtube.com/watch?v=${videoId}`;
+
+                    abrirGemini(videoUrl);
                 }
             }
-        }, true); // Fase de captura para interceptar antes que el propio YouTube
+
+        }, true);
+
+
+        // ==========================================
+        // FUNCIÓN PARA ABRIR GEMINI
+        // ==========================================
+        function abrirGemini(videoUrl) {
+
+            const promptCompleto =
+                `${PROMPT_BASE}${videoUrl}`;
+
+            // Guardar el prompt
+            GM_setValue(STORAGE_KEY, promptCompleto);
+
+            // Abrir Gemini en chat temporal
+            window.open(
+                GEMINI_TEMPORARY_CHAT_URL,
+                '_blank'
+            );
+        }
+
+
+        // ==========================================
+        // 2. CREAR BOTÓN "RESUMIR"
+        // ==========================================
+
+        function crearBotonResumen() {
+
+            // Evitar duplicados
+            if (document.getElementById(BUTTON_ID)) {
+                return;
+            }
+
+            // Solo mostrarlo en vídeos
+            if (!window.location.pathname.startsWith('/watch')) {
+                return;
+            }
+
+            // Contenedor de Like, Dislike, Compartir, etc.
+            const contenedor =
+                document.querySelector('#top-level-buttons-computed');
+
+            if (!contenedor) {
+                return;
+            }
+
+            // Crear botón
+            const boton = document.createElement('button');
+
+            boton.id = BUTTON_ID;
+            boton.type = 'button';
+
+            boton.setAttribute(
+                'aria-label',
+                'Resumir vídeo con Gemini'
+            );
+
+            boton.title = 'Resumir';
+
+            // ------------------------------------------
+            // ESTILO
+            // ------------------------------------------
+
+            boton.style.cssText = `
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 7px;
+                height: 36px;
+                padding: 0 14px;
+                margin-left: 8px;
+                border: none;
+                border-radius: 18px;
+                background: var(--yt-spec-badge-chip-background);
+                color: var(--yt-spec-text-primary);
+                font-family: "Roboto", "Arial", sans-serif;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                vertical-align: middle;
+                white-space: nowrap;
+            `;
+
+            // ------------------------------------------
+            // ICONO + TEXTO
+            // ------------------------------------------
+
+            boton.innerHTML = `
+                <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                >
+                    <path d="
+                        M4 4h16v2H4V4zm0 4h16v2H4V8zm0 4h10v2H4v-2zm0 4h10v2H4v-2zm12-4v8l6-4-6-4z
+                    "/>
+                </svg>
+
+                <span>Resumir</span>
+            `;
+
+            // ------------------------------------------
+            // HOVER
+            // ------------------------------------------
+
+            boton.addEventListener('mouseenter', () => {
+                boton.style.background =
+                    'var(--yt-spec-10-percent-layer)';
+            });
+
+            boton.addEventListener('mouseleave', () => {
+                boton.style.background =
+                    'var(--yt-spec-badge-chip-background)';
+            });
+
+
+            // ==========================================
+            // CLICK EN "RESUMIR"
+            // ==========================================
+
+            boton.addEventListener('click', function(e) {
+
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Obtener ID del vídeo actual
+                const url = new URL(window.location.href);
+
+                const videoId =
+                    url.searchParams.get('v');
+
+                if (!videoId) {
+
+                    alert(
+                        'No se ha podido detectar el vídeo.'
+                    );
+
+                    return;
+                }
+
+                // Crear URL limpia
+                const videoUrl =
+                    `https://www.youtube.com/watch?v=${videoId}`;
+
+                abrirGemini(videoUrl);
+            });
+
+
+            // Añadir al contenedor
+            contenedor.appendChild(boton);
+        }
+
+
+        // ==========================================
+        // 3. DETECTAR CAMBIOS DE YOUTUBE
+        // ==========================================
+
+        const observer = new MutationObserver(() => {
+            crearBotonResumen();
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        crearBotonResumen();
+
+        // Comprobación adicional
+        setInterval(() => {
+            crearBotonResumen();
+        }, 2000);
     }
 
+
     // ==========================================
-    // 2. LÓGICA PARA GEMINI
+    // 4. LÓGICA PARA GEMINI
     // ==========================================
-    else if (window.location.hostname.includes("gemini.google.com")) {
-        // Leer si hay un resumen pendiente
-        const pendingPrompt = GM_getValue(STORAGE_KEY, null);
+
+    else if (
+        window.location.hostname.includes("gemini.google.com")
+    ) {
+
+        const pendingPrompt =
+            GM_getValue(STORAGE_KEY, null);
 
         if (pendingPrompt) {
-            // Limpiar la memoria para que no se vuelva a enviar si recargas la página
+
+            // Eliminar inmediatamente para evitar
+            // que se vuelva a enviar al recargar
             GM_setValue(STORAGE_KEY, null);
 
-            // Intentar inyectar el texto repetidamente hasta que la interfaz de Gemini cargue
+
+            // ==========================================
+            // ESPERAR A QUE CARGUE GEMINI
+            // ==========================================
+
             const interval = setInterval(() => {
-                // Buscar la caja de texto principal de Gemini
-                const editor = document.querySelector('div[contenteditable="true"]');
 
-                if (editor) {
-                    clearInterval(interval);
-                    editor.focus();
+                const editor =
+                    document.querySelector(
+                        'div[contenteditable="true"]'
+                    );
 
-                    // Usar execCommand es la forma más segura de simular escritura humana
-                    // para que los frameworks de Google detecten el cambio de texto
-                    document.execCommand('insertText', false, pendingPrompt);
-
-                    // Darle a la interfaz medio segundo para asimilar el texto y luego enviarlo
-                    setTimeout(() => {
-                        // Buscar el botón de enviar (buscamos por atributo aria-label en español o inglés)
-                        const sendButton = document.querySelector('button[aria-label*="end message"], button[aria-label*="nviar"]');
-
-                        if (sendButton && !sendButton.disabled) {
-                            sendButton.click();
-                        } else {
-                            // Fallback: simular presionar la tecla Enter
-                            const enterEvent = new KeyboardEvent('keydown', {
-                                bubbles: true, cancelable: true, keyCode: 13, key: 'Enter'
-                            });
-                            editor.dispatchEvent(enterEvent);
-                        }
-                    }, 500);
+                if (!editor) {
+                    return;
                 }
+
+                clearInterval(interval);
+
+                editor.focus();
+
+
+                // ==========================================
+                // INSERTAR PROMPT
+                // ==========================================
+
+                document.execCommand(
+                    'insertText',
+                    false,
+                    pendingPrompt
+                );
+
+
+                // ==========================================
+                // ENVIAR
+                // ==========================================
+
+                setTimeout(() => {
+
+                    const sendButton =
+                        document.querySelector(
+                            'button[aria-label*="end message"], ' +
+                            'button[aria-label*="nviar"], ' +
+                            'button[aria-label*="Send"], ' +
+                            'button[aria-label*="Enviar"]'
+                        );
+
+                    if (
+                        sendButton &&
+                        !sendButton.disabled
+                    ) {
+
+                        sendButton.click();
+
+                    } else {
+
+                        // Fallback: Enter
+
+                        const enterEvent =
+                            new KeyboardEvent(
+                                'keydown',
+                                {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    keyCode: 13,
+                                    key: 'Enter'
+                                }
+                            );
+
+                        editor.dispatchEvent(
+                            enterEvent
+                        );
+                    }
+
+                }, 500);
+
             }, 500);
 
-            // Detener el intento después de 10 segundos por seguridad (si falla la carga de la web)
-            setTimeout(() => clearInterval(interval), 10000);
+
+            // ==========================================
+            // TIMEOUT DE SEGURIDAD
+            // ==========================================
+
+            setTimeout(() => {
+                clearInterval(interval);
+            }, 10000);
         }
     }
+
 })();
+```
