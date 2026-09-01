@@ -1,0 +1,94 @@
+// ==UserScript==
+// @name         YouTube a Gemini Summarizer
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Al hacer Ctrl + Shift + Click en un video de YouTube, abre Gemini y pide un resumen.
+// @author       Dvix-dev
+// @match        *://*.youtube.com/*
+// @match        *://gemini.google.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const PROMPT_BASE = "Hazme un resumen detallado de este video: ";
+    const STORAGE_KEY = "gemini_yt_pending_summary";
+
+    // ==========================================
+    // 1. LÓGICA PARA YOUTUBE
+    // ==========================================
+    if (window.location.hostname.includes("youtube.com")) {
+        document.addEventListener('click', function(e) {
+            // Verificar que Ctrl y Shift estén presionados
+            if (e.ctrlKey && e.shiftKey) {
+                // Buscar si se hizo clic en un enlace (ej. la miniatura o el título)
+                const link = e.target.closest('a');
+
+                // Verificar que sea un enlace válido de un video de YouTube
+                if (link && link.href && link.href.includes('/watch?v=')) {
+                    e.preventDefault();       // Evita que el video se abra en la pestaña actual
+                    e.stopPropagation();
+
+                    // Limpiar la URL de parámetros innecesarios (como el tiempo de inicio &t=)
+                    const videoUrl = link.href.split('&')[0];
+                    const promptCompleto = `${PROMPT_BASE}${videoUrl}`;
+
+                    // Guardar el texto en la memoria de Violentmonkey
+                    GM_setValue(STORAGE_KEY, promptCompleto);
+
+                    // Abrir Gemini en una nueva pestaña en blanco
+                    window.open('https://gemini.google.com/app', '_blank');
+                }
+            }
+        }, true); // Fase de captura para interceptar antes que el propio YouTube
+    }
+
+    // ==========================================
+    // 2. LÓGICA PARA GEMINI
+    // ==========================================
+    else if (window.location.hostname.includes("gemini.google.com")) {
+        // Leer si hay un resumen pendiente
+        const pendingPrompt = GM_getValue(STORAGE_KEY, null);
+
+        if (pendingPrompt) {
+            // Limpiar la memoria para que no se vuelva a enviar si recargas la página
+            GM_setValue(STORAGE_KEY, null);
+
+            // Intentar inyectar el texto repetidamente hasta que la interfaz de Gemini cargue
+            const interval = setInterval(() => {
+                // Buscar la caja de texto principal de Gemini
+                const editor = document.querySelector('div[contenteditable="true"]');
+
+                if (editor) {
+                    clearInterval(interval);
+                    editor.focus();
+
+                    // Usar execCommand es la forma más segura de simular escritura humana
+                    // para que los frameworks de Google detecten el cambio de texto
+                    document.execCommand('insertText', false, pendingPrompt);
+
+                    // Darle a la interfaz medio segundo para asimilar el texto y luego enviarlo
+                    setTimeout(() => {
+                        // Buscar el botón de enviar (buscamos por atributo aria-label en español o inglés)
+                        const sendButton = document.querySelector('button[aria-label*="end message"], button[aria-label*="nviar"]');
+
+                        if (sendButton && !sendButton.disabled) {
+                            sendButton.click();
+                        } else {
+                            // Fallback: simular presionar la tecla Enter
+                            const enterEvent = new KeyboardEvent('keydown', {
+                                bubbles: true, cancelable: true, keyCode: 13, key: 'Enter'
+                            });
+                            editor.dispatchEvent(enterEvent);
+                        }
+                    }, 500);
+                }
+            }, 500);
+
+            // Detener el intento después de 10 segundos por seguridad (si falla la carga de la web)
+            setTimeout(() => clearInterval(interval), 10000);
+        }
+    }
+})();
